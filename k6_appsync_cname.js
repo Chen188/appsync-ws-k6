@@ -4,22 +4,29 @@ import encoding from 'k6/encoding';
 import { group, check, sleep } from "k6";
 import { Rate, Trend } from 'k6/metrics';
 
+const http_api_host='xxxxxxxxxx.appsync-api.cn-northwest-1.amazonaws.com.cn';
+const realtime_api_host='xxxxxxxxxx.appsync-realtime-api.cn-northwest-1.amazonaws.com.cn'
+
+const cname_http_api_host='graphql.example.com';
+const cname_realtime_api_host='rt.example.com'
+
+
 const authz = {
-  host: 'your-appsync-endpoint',
+  host: http_api_host,
   'x-api-key': 'da2-your-api-key'
 };
 
 const header = encoding.b64encode(JSON.stringify(authz));
 
-const REALTIME_ENDPOINT = `wss://your-appsync-realtime-endpoint/graphql?header=${header}&payload=e30=`;
-const HTTP_ENDPOINT     = 'https://your-appsync-endpoint/graphql';
+const REALTIME_ENDPOINT = `wss://${cname_realtime_api_host}:443/graphql?header=${header}&payload=e30=`;
+const HTTP_ENDPOINT     = `https://${cname_http_api_host}/graphql`;
 
 //console.log(REALTIME_ENDPOINT)
 
-let ramp_up_duration   = 10,  // 在x秒内建立 *target* 个ws连接
-    keepalive_duration = 5,   // 保持x秒ws连接不断开
-    tear_down_duration = 5,   // tear down 
-    target             = 2000 // 建立连接数
+let ramp_up_duration   = 20,  // 在x秒内建立 *target* 个ws连接
+    keepalive_duration = 2,   // 保持x秒ws连接不断开
+    tear_down_duration = 10,   // tear down
+    target             = 10 // 建立连接数
     ;
 
 let subscription_data = {
@@ -52,7 +59,7 @@ export let options = {
       gracefulRampDown: '3s',
       gracefulStop: '3s',
     },
-    'appsync-broadcast': { // 
+    'appsync-broadcast': { //
       executor: 'per-vu-iterations',
       exec: 'broadcast',
       vus: 1,
@@ -105,8 +112,10 @@ export function broadcast() {
     "operationName": "MyMutation"
   }
 
+  console.log(url, JSON.stringify(data), {headers: headers})
+
   let res = http.post(url, JSON.stringify(data), {headers: headers});
-//  console.log('broadcast resp: ' + res.body);
+  // console.log('broadcast resp: ' + res.body);
 }
 
 function on_message(msg, socket) {
@@ -114,8 +123,8 @@ function on_message(msg, socket) {
 //  console.log("ws resp: " + msg)
 
   switch(_msg.type) {
-    case 'ka': // keep alive 
-    case 'start_ack': break; 
+    case 'ka': // keep alive
+    case 'start_ack': break;
 
     case 'error':
       ResponseSuccessRate.add(0);
@@ -127,7 +136,7 @@ function on_message(msg, socket) {
       break;
     case 'data':
       // receive broadcast
-      // {"id":"user-1","type":"data","payload":{"data":{"onCreateRoom":{"__typename":"Room","id":"xx","title":"room-1601101219641"}}}} 
+      // {"id":"user-1","type":"data","payload":{"data":{"onCreateRoom":{"__typename":"Room","id":"xx","title":"room-1601101219641"}}}}
       let received_at = +new Date();
       let created_at = _msg.payload.data.onCreateRoom.title.split('-')[1];
       let duration = received_at - created_at; // ms
@@ -136,13 +145,14 @@ function on_message(msg, socket) {
       ws_resp_delay.add(duration);
       break;
     default:
-      console.warn(`unknown msg type: ${_msg}`)
+      console.warn(`unknown msg type: ${JSON.stringify(_msg)}`)
   }
   ResponseSuccessRate.add(1);
 }
 
 function on_error(e) {
   if (e.error() != "websocket: close sent") {
+    ResponseSuccessRate.add(0);
     console.log("An unexpected error occured: ", e.error());
   }
 }
